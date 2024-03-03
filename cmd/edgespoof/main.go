@@ -14,14 +14,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	domain := os.Args[1]
-	cnames, terminal, err := resolver.TraceChain(context.Background(), domain)
+	domainInput := os.Args[1]
+	res, err := resolver.Resolve(context.Background(), domainInput)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Input Domain   : %s\n", domain)
-	fmt.Printf("CNAME Chain    : %v\n", cnames)
-	fmt.Printf("Terminal Target: %s\n", terminal)
+	fmt.Printf("Domain      : %s\n", res.Domain)
+	fmt.Printf("CNAME Chain : %v\n", res.CNAMEChain)
+	fmt.Printf("Target Edge : %s\n", res.TargetCNAME)
+	fmt.Printf("First IPv4  : %s\n", res.IPv4)
+	fmt.Printf("First IPv6  : %s\n", res.IPv6)
 }
