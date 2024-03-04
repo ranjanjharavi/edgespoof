@@ -6,6 +6,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -81,8 +82,8 @@ func resolveFirstIP(ctx context.Context, target, recordType string) (string, err
 	return "", nil
 }
 
-// Resolve traces the CNAME chain and fetches the first A and AAAA records sequentially
-func Resolve(ctx context.Context, domain string) (*Result, error) {
+// Traces the CNAME chain and fetches the first A and AAAA records concurrently
+func Resolve(ctx context.Context, domain string, v4Only bool) (*Result, error) {
 	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
 	res := &Result{Domain: domain}
 
@@ -105,19 +106,33 @@ func Resolve(ctx context.Context, domain string) (*Result, error) {
 		res.TargetCNAME = domain
 	}
 
-	// Sequential IPv4 (A) lookup on the TargetCNAME
-	ipv4, errV4 := resolveFirstIP(ctx, res.TargetCNAME, "A")
-	if errV4 != nil {
-		return nil, errV4
-	}
-	res.IPv4 = ipv4
+	// Concurrent Dual-Stack Lookup on TargetCNAME
+	var wg sync.WaitGroup
+	var errV4, errV6 error
 
-	// Sequential IPv6 (AAAA) lookup on the TargetCNAME
-	ipv6, errV6 := resolveFirstIP(ctx, res.TargetCNAME, "AAAA")
-	if errV6 != nil {
-		return nil, errV6
+	// Goroutine: Always fetch IPv4 (A)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res.IPv4, errV4 = resolveFirstIP(ctx, res.TargetCNAME, "A")
+	}()
+
+	// Goroutine: Fetch IPv6 (AAAA) unless --v4-only is set
+	if !v4Only {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res.IPv6, errV6 = resolveFirstIP(ctx, res.TargetCNAME, "AAAA")
+		}()
 	}
-	res.IPv6 = ipv6
+
+	// Block until both dig subprocesses finish
+	wg.Wait()
+
+	// Only fail if both lookups threw an execution error
+	if errV4 != nil && errV6 != nil {
+		return nil, fmt.Errorf("dual-stack lookup failed (v4: %v, v6: %v)", errV4, errV6)
+	}
 
 	if res.IPv4 == "" && res.IPv6 == "" {
 		return nil, fmt.Errorf("no valid A or AAAA records found for %s", res.TargetCNAME)
