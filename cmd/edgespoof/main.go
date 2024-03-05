@@ -2,20 +2,27 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/yupcode/edgespoof/internal/resolver"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run ./cmd/edgespoof <domain>")
+	v4Only := flag.Bool("v4-only", false, "Resolve IPv4 (A) record only")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println("Usage: go run ./cmd/edgespoof [--v4-only] <domain>")
 		os.Exit(1)
 	}
 
-	domainInput := os.Args[1]
-	res, err := resolver.Resolve(context.Background(), domainInput)
+	domainInput := flag.Arg(0)
+	startTime := time.Now()
+
+	res, err := resolver.Resolve(context.Background(), domainInput, *v4Only)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -26,4 +33,5 @@ func main() {
 	fmt.Printf("Target Edge : %s\n", res.TargetCNAME)
 	fmt.Printf("First IPv4  : %s\n", res.IPv4)
 	fmt.Printf("First IPv6  : %s\n", res.IPv6)
+	fmt.Printf("Resolved in : %v\n", time.Since(startTime).Round(time.Millisecond))
 }
