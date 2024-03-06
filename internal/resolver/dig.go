@@ -10,16 +10,18 @@ import (
 	"time"
 )
 
+const digTimeout = 4 * time.Second
+
 // To hold the complete resolution chain and dual-stack IPs
 type Result struct {
 	Domain      string
 	CNAMEChain  []string
+	StagingSwap string
 	TargetCNAME string
 	IPv4        string
 	IPv6        string
+	StagingMode bool
 }
-
-const digTimeout = 4 * time.Second
 
 func runDig(ctx context.Context, name, qtype string) ([]string, error) {
 	// Derived context that automatically cancels after 4 seconds preventing CLI exec when DNS servers are not reachable
@@ -82,12 +84,42 @@ func resolveFirstIP(ctx context.Context, target, recordType string) (string, err
 	return "", nil
 }
 
-// Traces the CNAME chain and fetches the first A and AAAA records concurrently
-func Resolve(ctx context.Context, domain string, v4Only bool) (*Result, error) {
-	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
-	res := &Result{Domain: domain}
+// Scans CNAME hops in order and swaps the first matching CDN suffix
+func findAndRewriteStaging(cnames []string) (string, bool) {
+	rules := []struct {
+		prod    string
+		staging string
+	}{
+		{".edgekey.net.", ".edgekey-staging.net."},
+		{".edgesuite.net.", ".edgesuite-staging.net."},
+		{".akamaiedge.net.", ".akamaiedge-staging.net."},
+		{".akamai.net.", ".akamai-staging.net."},
+	}
 
-	// Trace CNAME chain
+	for _, cname := range cnames {
+		lower := strings.ToLower(cname)
+
+		for _, rule := range rules {
+			if strings.HasSuffix(lower, rule.prod) {
+				// Strip the production suffix and append the staging suffix
+				swapped := strings.TrimSuffix(lower, rule.prod) + rule.staging
+				return swapped, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// Traces the CNAME chain and fetches the first A and AAAA records concurrently
+func Resolve(ctx context.Context, domain string, staging bool, v4Only bool) (*Result, error) {
+	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	res := &Result{
+		Domain:      domain,
+		StagingMode: staging,
+	}
+
+	// Trace Initial CNAME chain
 	lines, err := runDig(ctx, domain, "A")
 	if err != nil {
 		return nil, err
@@ -99,11 +131,39 @@ func Resolve(ctx context.Context, domain string, v4Only bool) (*Result, error) {
 		}
 	}
 
-	if len(res.CNAMEChain) > 0 {
-		CNAMEChainIndex := len(res.CNAMEChain) - 1
-		res.TargetCNAME = strings.TrimSuffix(res.CNAMEChain[CNAMEChainIndex], ".")
+	// Select TargetCNAME: Staging Rewrite vs. Production Terminal CNAME
+	if staging {
+		stagingHost, ok := findAndRewriteStaging(res.CNAMEChain)
+		if !ok {
+			return nil, fmt.Errorf("no Akamai CNAME (.edgekey.net, .edgesuite.net, .akamaiedge.net) found in chain for %s", domain)
+		}
+
+		res.StagingSwap = stagingHost
+
+		// Run secondary dig on the rewritten staging CNAME to find the staging edge node
+		stagingLines, err := runDig(ctx, stagingHost, "A")
+		if err != nil {
+			return nil, fmt.Errorf("staging dig failed for %s: %w", stagingHost, err)
+		}
+
+		var terminalStaging string
+		for _, line := range stagingLines {
+			if strings.HasSuffix(line, ".") {
+				terminalStaging = line
+			}
+		}
+
+		if terminalStaging != "" {
+			res.TargetCNAME = strings.TrimSuffix(terminalStaging, ".")
+		} else {
+			res.TargetCNAME = strings.TrimSuffix(stagingHost, ".")
+		}
 	} else {
-		res.TargetCNAME = domain
+		if len(res.CNAMEChain) > 0 {
+			res.TargetCNAME = strings.TrimSuffix(res.CNAMEChain[len(res.CNAMEChain)-1], ".")
+		} else {
+			res.TargetCNAME = domain
+		}
 	}
 
 	// Concurrent Dual-Stack Lookup on TargetCNAME
