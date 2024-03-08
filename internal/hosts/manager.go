@@ -15,6 +15,15 @@ type Manager struct {
 	Path string
 }
 
+type Entry struct {
+	Domain      string
+	IPv4        string
+	IPv6        string
+	TargetCNAME string
+	Staging     bool
+	UpdatedAt   string
+}
+
 // Returns a Manager pointing to path (or /etc/hosts if empty)
 func NewManager(path string) *Manager {
 	if path == "" {
@@ -22,6 +31,17 @@ func NewManager(path string) *Manager {
 	}
 
 	return &Manager{Path: path}
+}
+
+// Reads the hosts file and returns all active spoofed domains in order
+func (m *Manager) List() ([]Entry, error) {
+	content, err := os.ReadFile(m.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	_, blockLines, _ := splitContent(string(content))
+	return parseEntries(blockLines), nil
 }
 
 // Reads the hosts file and splits it into before, block, and after sections
@@ -68,4 +88,82 @@ func splitContent(raw string) (before, block, after []string) {
 	}
 
 	return before, block, after
+}
+
+// Merges IPv4/IPv6 lines and extracts inline comment metadata
+func parseEntries(lines []string) []Entry {
+	byDomain := make(map[string]*Entry)
+	var order []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		// Split the line into the hosts part and the inline comment
+		parts := strings.SplitN(trimmed, "#", 2)
+
+		// Extract IP and Domain using strings.Fields (handles any number of spaces/tabs)
+		hostFields := strings.Fields(parts[0])
+		if len(hostFields) < 2 {
+			continue
+		}
+
+		ip := hostFields[0]
+		domain := strings.ToLower(hostFields[1])
+
+		// Look up or initialize the Entry for this domain while preserving insertion order
+		ent, exists := byDomain[domain]
+		if !exists {
+			ent = &Entry{Domain: domain}
+			byDomain[domain] = ent
+			order = append(order, domain)
+		}
+
+		// Assign IP to IPv6 (contains ':') or IPv4
+		if strings.Contains(ip, ":") {
+			ent.IPv6 = ip
+		} else {
+			ent.IPv4 = ip
+		}
+
+		// Parse inline metadata if a comment exists
+		if len(parts) == 2 {
+			parseCommentMetadata(parts[1], ent)
+		}
+	}
+
+	// Reconstruct the ordered slice of Entries
+	var result []Entry
+	for _, domain := range order {
+		result = append(result, *byDomain[domain])
+	}
+	return result
+}
+
+// parseCommentMetadata extracts key=value pairs from "edgespoof:target=...|mode=...|ts=..."
+func parseCommentMetadata(rawComment string, ent *Entry) {
+	meta := strings.TrimSpace(rawComment)
+	if !strings.HasPrefix(meta, "edgespoof:") {
+		return
+	}
+	meta = strings.TrimPrefix(meta, "edgespoof:")
+
+	for _, kv := range strings.Split(meta, "|") {
+		pair := strings.SplitN(kv, "=", 2)
+		if len(pair) != 2 {
+			continue
+		}
+		key, val := pair[0], pair[1]
+
+		switch key {
+		case "target":
+			ent.TargetCNAME = val
+		case "mode":
+			ent.Staging = (val == "staging")
+		case "ts":
+			ent.UpdatedAt = val
+		}
+	}
 }
