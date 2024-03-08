@@ -1,8 +1,10 @@
 package hosts
 
 import (
+	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -166,4 +168,91 @@ func parseCommentMetadata(rawComment string, ent *Entry) {
 			ent.UpdatedAt = val
 		}
 	}
+}
+
+// Update an existing domain or append if new
+func upsertEntry(entries []Entry, incoming Entry) []Entry {
+	if incoming.UpdatedAt == "" {
+		incoming.UpdatedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
+
+	for i, existing := range entries {
+		if strings.EqualFold(existing.Domain, incoming.Domain) {
+			entries[i] = incoming // Update in-place to preserve ordering
+			return entries
+		}
+	}
+
+	return append(entries, incoming)
+}
+
+// Filter a domain and report if found
+func removeEntry(entries []Entry, domain string) ([]Entry, bool) {
+	var filtered []Entry
+	removed := false
+
+	for _, existing := range entries {
+		if strings.EqualFold(existing.Domain, domain) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, existing)
+	}
+
+	return filtered, removed
+}
+
+// Reconstruct the entire hosts file with no blank line drifts
+func formatFileContent(before []string, entries []Entry, after []string) string {
+	var out []string
+
+	// Trim from 'before'
+	for len(before) > 0 && strings.TrimSpace(before[len(before)-1]) == "" {
+		before = before[:len(before)-1]
+	}
+	out = append(out, before...)
+
+	// Render edgespoof block ONLY
+	if len(entries) > 0 {
+		if len(out) > 0 {
+			out = append(out, "") // Single blank line before fence
+		}
+		out = append(out, FenceStart)
+
+		for _, e := range entries {
+			mode := "edge"
+			if e.Staging {
+				mode = "staging"
+			}
+			meta := fmt.Sprintf("# edgespoof:target=%s|mode=%s|ts=%s", e.TargetCNAME, mode, e.UpdatedAt)
+
+			if e.IPv4 != "" {
+				out = append(out, fmt.Sprintf("%-28s %-32s %s", e.IPv4, e.Domain, meta))
+			}
+			if e.IPv6 != "" {
+				out = append(out, fmt.Sprintf("%-28s %-32s %s", e.IPv6, e.Domain, meta))
+			}
+		}
+
+		out = append(out, FenceEnd)
+	}
+
+	// Trim from 'after'
+	for len(after) > 0 && strings.TrimSpace(after[0]) == "" {
+		after = after[1:]
+	}
+
+	// Trim trailing blank lines from 'after' so we end with a single clean "\n"
+	for len(after) > 0 && strings.TrimSpace(after[len(after)-1]) == "" {
+		after = after[:len(after)-1]
+	}
+
+	if len(after) > 0 {
+		if len(out) > 0 {
+			out = append(out, "") // Single blank line after fence
+		}
+		out = append(out, after...)
+	}
+
+	return strings.Join(out, "\n") + "\n"
 }
