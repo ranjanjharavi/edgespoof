@@ -1,9 +1,12 @@
 package hosts
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -255,4 +258,88 @@ func formatFileContent(before []string, entries []Entry, after []string) string 
 	}
 
 	return strings.Join(out, "\n") + "\n"
+}
+
+// Upsert a domain's IPv4 and IPv6 records inside the fenced block atomically
+func (m *Manager) Upsert(e Entry) error {
+	content, err := os.ReadFile(m.Path)
+	if err != nil {
+		return err
+	}
+
+	before, blockLines, after := splitContent(string(content))
+	entries := upsertEntry(parseEntries(blockLines), e)
+
+	return m.writeAtomic(before, entries, after)
+}
+
+// Deletes a specific domain from the fenced block atomically
+func (m *Manager) Remove(domain string) (bool, error) {
+	content, err := os.ReadFile(m.Path)
+	if err != nil {
+		return false, err
+	}
+
+	before, blockLines, after := splitContent(string(content))
+	entries, removed := removeEntry(parseEntries(blockLines), domain)
+	if !removed {
+		return false, nil
+	}
+
+	return true, m.writeAtomic(before, entries, after)
+}
+
+// Clear removes the entire fenced block from the hosts file atomically
+func (m *Manager) Clear() error {
+	content, err := os.ReadFile(m.Path)
+	if err != nil {
+		return err
+	}
+
+	before, _, after := splitContent(string(content))
+	return m.writeAtomic(before, nil, after)
+}
+
+// Writes the formatted hosts content to a sibling temp file,
+// sets 0644 permissions, and atomically swaps it over the target path
+func (m *Manager) writeAtomic(before []string, entries []Entry, after []string) error {
+	finalData := formatFileContent(before, entries, after)
+
+	// Create temp file in the exact same directory to guarantee same-filesystem rename
+	dir := filepath.Dir(m.Path)
+	tmpFile, err := os.CreateTemp(dir, ".hosts.edgespoof.*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp hosts file (verify sudo?): %w", err)
+	}
+	tmpName := tmpFile.Name()
+	defer os.Remove(tmpName) // Ensure cleanup if any step before Rename fails
+
+	// Write formatted content to the temp file
+	if _, err := tmpFile.WriteString(finalData); err != nil {
+		tmpFile.Close()
+		return err
+	}
+
+	// Critical: os.CreateTemp defaults to 0600.
+	// Restore 0644 so non-root processes can read /etc/hosts
+	if err := tmpFile.Chmod(0644); err != nil {
+		tmpFile.Close()
+		return err
+	}
+
+	// Flush and close descriptor before renaming
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	// Atomic POSIX rename over the target file
+	if err := os.Rename(tmpName, m.Path); err != nil {
+		// Fallback for Docker / bind-mounted /etc/hosts where rename returns EXDEV or EBUSY
+		if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.EBUSY) {
+			return os.WriteFile(m.Path, []byte(finalData), 0644)
+		}
+		return err
+	}
+
+	return nil
 }
