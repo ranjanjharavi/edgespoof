@@ -10,11 +10,7 @@ import (
 	"time"
 )
 
-const (
-	DefaultHostsPath = "/etc/hosts"
-	FenceStart       = "# --- EDGESPOOF START ---"
-	FenceEnd         = "# --- EDGESPOOF END ---"
-)
+const DefaultHostsPath = "/etc/hosts"
 
 type Manager struct {
 	Path string
@@ -45,8 +41,13 @@ func (m *Manager) List() ([]Entry, error) {
 		return nil, err
 	}
 
-	_, blockLines, _ := splitContent(string(content))
-	return parseEntries(blockLines), nil
+	sections, err := parseFileContent(string(content))
+	if err != nil {
+		return nil, err
+	}
+	lines := contentLines(sections.block)
+	entries := parseEntries(lines)
+	return entries, nil
 }
 
 // Reads the hosts file and splits it into before, block, and after sections
@@ -56,121 +57,14 @@ func (m *Manager) ReadSections() (before, block, after []string, err error) {
 		return nil, nil, nil, err
 	}
 
-	before, block, after = splitContent(string(content))
+	sections, err := parseFileContent(string(content))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	before = contentLines(sections.before)
+	block = contentLines(sections.block)
+	after = contentLines(sections.after)
 	return before, block, after, nil
-}
-
-// Isolate the EDGESPOOF block
-func splitContent(raw string) (before, block, after []string) {
-	// Normalize Windows (\r\n) line endings to Unix (\n) just in case
-	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
-
-	// 0 = before fence, 1 = inside fence, 2 = after fence
-	state := 0
-
-	// Transition on the markers but do not include them
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if trimmed == FenceStart {
-			state = 1
-			continue
-		}
-
-		if trimmed == FenceEnd {
-			state = 2
-			continue
-		}
-
-		switch state {
-		case 0:
-			before = append(before, line)
-		case 1:
-			block = append(block, line)
-		case 2:
-			after = append(after, line)
-		}
-	}
-
-	return before, block, after
-}
-
-// Merges IPv4/IPv6 lines and extracts inline comment metadata
-func parseEntries(lines []string) []Entry {
-	byDomain := make(map[string]*Entry)
-	var order []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		// Split the line into the hosts part and the inline comment
-		parts := strings.SplitN(trimmed, "#", 2)
-
-		// Extract IP and Domain using strings.Fields (handles any number of spaces/tabs)
-		hostFields := strings.Fields(parts[0])
-		if len(hostFields) < 2 {
-			continue
-		}
-
-		ip := hostFields[0]
-		domain := strings.ToLower(hostFields[1])
-
-		// Look up or initialize the Entry for this domain while preserving insertion order
-		ent, exists := byDomain[domain]
-		if !exists {
-			ent = &Entry{Domain: domain}
-			byDomain[domain] = ent
-			order = append(order, domain)
-		}
-
-		// Assign IP to IPv6 (contains ':') or IPv4
-		if strings.Contains(ip, ":") {
-			ent.IPv6 = ip
-		} else {
-			ent.IPv4 = ip
-		}
-
-		// Parse inline metadata if a comment exists
-		if len(parts) == 2 {
-			parseCommentMetadata(parts[1], ent)
-		}
-	}
-
-	// Reconstruct the ordered slice of Entries
-	var result []Entry
-	for _, domain := range order {
-		result = append(result, *byDomain[domain])
-	}
-	return result
-}
-
-// parseCommentMetadata extracts key=value pairs from "edgespoof:target=...|mode=...|ts=..."
-func parseCommentMetadata(rawComment string, ent *Entry) {
-	meta := strings.TrimSpace(rawComment)
-	if !strings.HasPrefix(meta, "edgespoof:") {
-		return
-	}
-	meta = strings.TrimPrefix(meta, "edgespoof:")
-
-	for _, kv := range strings.Split(meta, "|") {
-		pair := strings.SplitN(kv, "=", 2)
-		if len(pair) != 2 {
-			continue
-		}
-		key, val := pair[0], pair[1]
-
-		switch key {
-		case "target":
-			ent.TargetCNAME = val
-		case "mode":
-			ent.Staging = (val == "staging")
-		case "ts":
-			ent.UpdatedAt = val
-		}
-	}
 }
 
 // Update an existing domain or append if new
@@ -205,61 +99,6 @@ func removeEntry(entries []Entry, domain string) ([]Entry, bool) {
 	return filtered, removed
 }
 
-// Reconstruct the entire hosts file with no blank line drifts
-func formatFileContent(before []string, entries []Entry, after []string) string {
-	var out []string
-
-	// Trim from 'before'
-	for len(before) > 0 && strings.TrimSpace(before[len(before)-1]) == "" {
-		before = before[:len(before)-1]
-	}
-	out = append(out, before...)
-
-	// Render edgespoof block ONLY
-	if len(entries) > 0 {
-		if len(out) > 0 {
-			out = append(out, "") // Single blank line before fence
-		}
-		out = append(out, FenceStart)
-
-		for _, e := range entries {
-			mode := "edge"
-			if e.Staging {
-				mode = "staging"
-			}
-			meta := fmt.Sprintf("# edgespoof:target=%s|mode=%s|ts=%s", e.TargetCNAME, mode, e.UpdatedAt)
-
-			if e.IPv4 != "" {
-				out = append(out, fmt.Sprintf("%-28s %-32s %s", e.IPv4, e.Domain, meta))
-			}
-			if e.IPv6 != "" {
-				out = append(out, fmt.Sprintf("%-28s %-32s %s", e.IPv6, e.Domain, meta))
-			}
-		}
-
-		out = append(out, FenceEnd)
-	}
-
-	// Trim from 'after'
-	for len(after) > 0 && strings.TrimSpace(after[0]) == "" {
-		after = after[1:]
-	}
-
-	// Trim trailing blank lines from 'after' so we end with a single clean "\n"
-	for len(after) > 0 && strings.TrimSpace(after[len(after)-1]) == "" {
-		after = after[:len(after)-1]
-	}
-
-	if len(after) > 0 {
-		if len(out) > 0 {
-			out = append(out, "") // Single blank line after fence
-		}
-		out = append(out, after...)
-	}
-
-	return strings.Join(out, "\n") + "\n"
-}
-
 // Upsert a domain's IPv4 and IPv6 records inside the fenced block atomically
 func (m *Manager) Upsert(e Entry) error {
 	content, err := os.ReadFile(m.Path)
@@ -267,10 +106,16 @@ func (m *Manager) Upsert(e Entry) error {
 		return err
 	}
 
-	before, blockLines, after := splitContent(string(content))
-	entries := upsertEntry(parseEntries(blockLines), e)
+	sections, err := parseFileContent(string(content))
+	if err != nil {
+		return err
+	}
+	lines := contentLines(sections.block)
+	entries := parseEntries(lines)
+	entries = upsertEntry(entries, e)
 
-	return m.writeAtomic(before, entries, after)
+	updatedContent := formatFileContent(sections, entries)
+	return m.writeAtomic(updatedContent)
 }
 
 // Deletes a specific domain from the fenced block atomically
@@ -280,13 +125,19 @@ func (m *Manager) Remove(domain string) (bool, error) {
 		return false, err
 	}
 
-	before, blockLines, after := splitContent(string(content))
-	entries, removed := removeEntry(parseEntries(blockLines), domain)
+	sections, err := parseFileContent(string(content))
+	if err != nil {
+		return false, err
+	}
+	lines := contentLines(sections.block)
+	entries := parseEntries(lines)
+	entries, removed := removeEntry(entries, domain)
 	if !removed {
 		return false, nil
 	}
 
-	return true, m.writeAtomic(before, entries, after)
+	updatedContent := formatFileContent(sections, entries)
+	return true, m.writeAtomic(updatedContent)
 }
 
 // Clear removes the entire fenced block from the hosts file atomically
@@ -296,15 +147,20 @@ func (m *Manager) Clear() error {
 		return err
 	}
 
-	before, _, after := splitContent(string(content))
-	return m.writeAtomic(before, nil, after)
+	sections, err := parseFileContent(string(content))
+	if err != nil {
+		return err
+	}
+	if !sections.hasBlock {
+		return nil
+	}
+	updatedContent := formatFileContent(sections, nil)
+	return m.writeAtomic(updatedContent)
 }
 
 // Writes the formatted hosts content to a sibling temp file,
 // sets 0644 permissions, and atomically swaps it over the target path
-func (m *Manager) writeAtomic(before []string, entries []Entry, after []string) error {
-	finalData := formatFileContent(before, entries, after)
-
+func (m *Manager) writeAtomic(finalData string) error {
 	// Create temp file in the exact same directory to guarantee same-filesystem rename
 	dir := filepath.Dir(m.Path)
 	tmpFile, err := os.CreateTemp(dir, ".hosts.edgespoof.*")
