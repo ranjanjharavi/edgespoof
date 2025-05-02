@@ -1,12 +1,8 @@
 package hosts
 
 import (
-	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -64,6 +60,7 @@ func (m *Manager) ReadSections() (before, block, after []string, err error) {
 	before = contentLines(sections.before)
 	block = contentLines(sections.block)
 	after = contentLines(sections.after)
+
 	return before, block, after, nil
 }
 
@@ -99,103 +96,56 @@ func removeEntry(entries []Entry, domain string) ([]Entry, bool) {
 	return filtered, removed
 }
 
-// Upsert a domain's IPv4 and IPv6 records inside the fenced block atomically
+// Upsert adds or updates a domain inside the managed block
 func (m *Manager) Upsert(e Entry) error {
-	content, err := os.ReadFile(m.Path)
-	if err != nil {
-		return err
-	}
+	_, err := m.update(func(entries []Entry) ([]Entry, bool) {
+		return upsertEntry(entries, e), true
+	})
 
-	sections, err := parseFileContent(string(content))
-	if err != nil {
-		return err
-	}
-	lines := contentLines(sections.block)
-	entries := parseEntries(lines)
-	entries = upsertEntry(entries, e)
-
-	updatedContent := formatFileContent(sections, entries)
-	return m.writeAtomic(updatedContent)
+	return err
 }
 
-// Deletes a specific domain from the fenced block atomically
+// Remove deletes a domain from the managed block.
 func (m *Manager) Remove(domain string) (bool, error) {
+	return m.update(func(entries []Entry) ([]Entry, bool) {
+		return removeEntry(entries, domain)
+	})
+}
+
+// Clear removes the managed block.
+func (m *Manager) Clear() error {
+	_, err := m.update(func([]Entry) ([]Entry, bool) {
+		return nil, true
+	})
+
+	return err
+}
+
+func (m *Manager) update(change func([]Entry) ([]Entry, bool)) (bool, error) {
+	lock, err := m.lockFile()
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+
 	content, err := os.ReadFile(m.Path)
 	if err != nil {
 		return false, err
 	}
-
 	sections, err := parseFileContent(string(content))
 	if err != nil {
 		return false, err
 	}
-	lines := contentLines(sections.block)
-	entries := parseEntries(lines)
-	entries, removed := removeEntry(entries, domain)
-	if !removed {
+	entries := parseEntries(contentLines(sections.block))
+	entries, changed := change(entries)
+	if !changed {
 		return false, nil
 	}
 
 	updatedContent := formatFileContent(sections, entries)
+	if updatedContent == string(content) {
+		return true, nil
+	}
+
 	return true, m.writeAtomic(updatedContent)
-}
-
-// Clear removes the entire fenced block from the hosts file atomically
-func (m *Manager) Clear() error {
-	content, err := os.ReadFile(m.Path)
-	if err != nil {
-		return err
-	}
-
-	sections, err := parseFileContent(string(content))
-	if err != nil {
-		return err
-	}
-	if !sections.hasBlock {
-		return nil
-	}
-	updatedContent := formatFileContent(sections, nil)
-	return m.writeAtomic(updatedContent)
-}
-
-// Writes the formatted hosts content to a sibling temp file,
-// sets 0644 permissions, and atomically swaps it over the target path
-func (m *Manager) writeAtomic(finalData string) error {
-	// Create temp file in the exact same directory to guarantee same-filesystem rename
-	dir := filepath.Dir(m.Path)
-	tmpFile, err := os.CreateTemp(dir, ".hosts.edgespoof.*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp hosts file (verify sudo?): %w", err)
-	}
-	tmpName := tmpFile.Name()
-	defer os.Remove(tmpName) // Ensure cleanup if any step before Rename fails
-
-	// Write formatted content to the temp file
-	if _, err := tmpFile.WriteString(finalData); err != nil {
-		tmpFile.Close()
-		return err
-	}
-
-	// Critical: os.CreateTemp defaults to 0600.
-	// Restore 0644 so non-root processes can read /etc/hosts
-	if err := tmpFile.Chmod(0644); err != nil {
-		tmpFile.Close()
-		return err
-	}
-
-	// Flush and close descriptor before renaming
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-
-	// Atomic POSIX rename over the target file
-	if err := os.Rename(tmpName, m.Path); err != nil {
-		// Fallback for Docker / bind-mounted /etc/hosts where rename returns EXDEV or EBUSY
-		if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.EBUSY) {
-			return os.WriteFile(m.Path, []byte(finalData), 0644)
-		}
-		return err
-	}
-
-	return nil
 }
