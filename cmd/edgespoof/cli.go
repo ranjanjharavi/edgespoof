@@ -12,7 +12,6 @@ import (
 
 	"github.com/yupcode/edgespoof/internal/hosts"
 	"github.com/yupcode/edgespoof/internal/resolver"
-	"github.com/yupcode/edgespoof/internal/system"
 )
 
 type command struct {
@@ -53,6 +52,7 @@ func parseCommand(args []string) (command, error) {
 		if errors.Is(err, flag.ErrHelp) {
 			return command{name: "help"}, nil
 		}
+
 		return command{}, fmt.Errorf("%s: %w", cmd.name, err)
 	}
 
@@ -64,6 +64,7 @@ func parseCommand(args []string) (command, error) {
 		if len(positional) > 1 {
 			return command{}, fmt.Errorf("%s accepts exactly one domain, unexpected argument %q", cmd.name, positional[1])
 		}
+
 		domain, err := normalizeDomain(positional[0])
 		if err != nil {
 			return command{}, err
@@ -123,17 +124,19 @@ func run(args []string) error {
 	}
 
 	customHostsPath := os.Getenv("EDGESPOOF_HOSTS_PATH")
+	customHosts := customHostsPath != ""
 	mgr := hosts.NewManager(customHostsPath)
+
 	switch cmd.name {
 	case "set", "unset", "clear":
-		if customHostsPath == "" && os.Geteuid() != 0 {
+		if !customHosts && os.Geteuid() != 0 {
 			return errors.New("modifying /etc/hosts requires root privileges. Re-run with sudo")
 		}
 	}
 
 	switch cmd.name {
 	case "resolve", "set":
-		return runResolve(cmd, mgr)
+		return runResolve(cmd, mgr, customHosts)
 
 	case "unset":
 		removed, err := mgr.Remove(cmd.domain)
@@ -144,8 +147,8 @@ func run(args []string) error {
 			fmt.Printf("%s!%s Domain %s was not found in the active edgespoof block.\n", colorYellow, colorReset, cmd.domain)
 			return nil
 		}
-		_ = system.FlushDNSCache()
-		fmt.Printf("%s✔%s Removed %s from hosts file & flushed OS DNS cache\n", colorGreen, colorReset, cmd.domain)
+		message := fmt.Sprintf("Removed %s from hosts file", cmd.domain)
+		reportHostsUpdate(message, customHosts)
 
 	case "list":
 		entries, err := mgr.List()
@@ -169,8 +172,7 @@ func run(args []string) error {
 		if err := mgr.Clear(); err != nil {
 			return fmt.Errorf("failed to clear hosts block: %w", err)
 		}
-		_ = system.FlushDNSCache()
-		fmt.Printf("%s✔%s Cleared all edgespoof entries & flushed OS DNS cache\n", colorGreen, colorReset)
+		reportHostsUpdate("Cleared all edgespoof entries", customHosts)
 
 	case "help":
 		printUsage()
@@ -179,7 +181,7 @@ func run(args []string) error {
 	return nil
 }
 
-func runResolve(cmd command, mgr *hosts.Manager) error {
+func runResolve(cmd command, mgr *hosts.Manager, customHosts bool) error {
 	res, err := resolver.Resolve(context.Background(), cmd.domain, cmd.staging, cmd.v4Only)
 	if err != nil {
 		return err
@@ -201,8 +203,6 @@ func runResolve(cmd command, mgr *hosts.Manager) error {
 		return fmt.Errorf("failed to update hosts file: %w", err)
 	}
 
-	_ = system.FlushDNSCache()
-	fmt.Printf("%s✔%s Updated hosts file & flushed OS DNS cache\n", colorGreen, colorReset)
-
+	reportHostsUpdate("Updated hosts file", customHosts)
 	return nil
 }
