@@ -144,7 +144,7 @@ func run(args []string) error {
 			return fmt.Errorf("failed to update hosts file: %w", err)
 		}
 		if !removed {
-			fmt.Printf("%s!%s Domain %s was not found in the active edgespoof block.\n", colorYellow, colorReset, cmd.domain)
+			printDomainNotFound(cmd.domain)
 			return nil
 		}
 		message := fmt.Sprintf("Removed %s from hosts file", cmd.domain)
@@ -155,10 +155,6 @@ func run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read hosts file: %w", err)
 		}
-		if len(entries) == 0 {
-			fmt.Printf("%sNo active edgespoof entries in hosts file.%s\n", colorDim, colorReset)
-			return nil
-		}
 		printEntries(entries)
 
 	case "status":
@@ -166,7 +162,7 @@ func run(args []string) error {
 		if err != nil || len(entries) == 0 {
 			return nil
 		}
-		fmt.Printf("[SPOOF:%d]\n", len(entries))
+		printStatus(len(entries))
 
 	case "clear":
 		if err := mgr.Clear(); err != nil {

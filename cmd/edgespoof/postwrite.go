@@ -1,22 +1,17 @@
 package main
 
-import (
-	"fmt"
-	"os"
-
-	"github.com/yupcode/edgespoof/internal/system"
-)
+import "github.com/yupcode/edgespoof/internal/system"
 
 func reportHostsUpdate(message string, customHosts bool) {
-	fmt.Printf("%s✔%s %s\n", colorGreen, colorReset, message)
+	printSuccess(message)
 	if customHosts {
 		return
 	}
 
 	if err := system.FlushDNSCache(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s! Warning:%s Hosts file updated, but OS DNS cache flush failed: %v\n", colorYellow, colorReset, err)
+		printFlushWarning(err)
 		return
 	}
-	
-	fmt.Printf("%s✔%s Flushed OS DNS cache\n", colorGreen, colorReset)
+
+	printSuccess("Flushed OS DNS cache")
 }
