@@ -2,19 +2,14 @@
 
 Find CDN edge IPs. Pin domains in `/etc/hosts`. Switch to Akamai staging when needed.
 
-
-## Overview
-
-`edgespoof` automates resolution of CDN edge servers and Akamai staging networks. The tool traces CNAME chains via `dig`, extracts terminal edge nodes, concurrently queries `A` (IPv4) and `AAAA` (IPv6) records, updates `/etc/hosts` within an isolated block using atomic file swaps, and flushes local OS DNS caches.
-
-
 ## Need
 
+- macOS or Linux
 - Go 1.22+
 - `dig` in `$PATH` (`dnsutils` or `bind-tools`)
 - `sudo` for changes to `/etc/hosts`
 
-## Build & Installation
+## Build
 
 ```zsh
 go build -ldflags="-s -w" -o edgespoof ./cmd/edgespoof
@@ -31,7 +26,7 @@ edgespoof resolve example.com -s
 # Pin edge IPs
 sudo edgespoof set example.com
 
-# Pin staging IPs.
+# Pin staging IPs
 sudo edgespoof set example.com -s
 
 # Show pinned domains
@@ -45,9 +40,20 @@ sudo edgespoof clear
 
 # Shell prompt token: [SPOOF:2]. Empty when none
 edgespoof status
+
+# Show help
+edgespoof help
 ```
 
 Replace `example.com` with the target domain.
+
+## Domains
+
+- One domain for `resolve`, `set`, or `unset`.
+- Names become lowercase. One trailing dot gets removed.
+- Empty names, whitespace, and control characters fail.
+- Extra arguments and unknown flags fail.
+- Aliases: `rm` for `unset`, `ls` for `list`.
 
 ## Flags
 
@@ -60,8 +66,12 @@ Use with `resolve` or `set`, before or after the domain.
 
 - Entries live between `# --- EDGESPOOF START ---` and `# --- EDGESPOOF END ---`.
 - Edge target, mode, and timestamp live in inline comments.
+- Broken block markers stop reads and writes. Unmanaged text stays intact.
 - Writes use a temporary file and atomic rename. Bind mounts may need a direct write.
-- Changes attempt a DNS cache flush on macOS and Linux. Flush errors are ignored.
+- Concurrent writes use `<hosts path>.edgespoof.lock`. Keep this lock file.
+- System hosts changes attempt a DNS cache flush on macOS and Linux. Failures print a warning.
+- Custom hosts files skip OS cache flushing.
+- Flush warnings leave hosts changes saved. Exit status stays `0`.
 
 ## Use another hosts file
 

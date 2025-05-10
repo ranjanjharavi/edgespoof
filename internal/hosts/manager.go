@@ -21,7 +21,7 @@ type Entry struct {
 	UpdatedAt   string
 }
 
-// Returns a Manager pointing to path (or /etc/hosts if empty)
+// NewManager uses /etc/hosts when path is empty
 func NewManager(path string) *Manager {
 	if path == "" {
 		path = DefaultHostsPath
@@ -30,7 +30,7 @@ func NewManager(path string) *Manager {
 	return &Manager{Path: path}
 }
 
-// Reads the hosts file and returns all active spoofed domains in order
+// List returns managed entries in file order
 func (m *Manager) List() ([]Entry, error) {
 	content, err := os.ReadFile(m.Path)
 	if err != nil {
@@ -46,25 +46,6 @@ func (m *Manager) List() ([]Entry, error) {
 	return entries, nil
 }
 
-// Reads the hosts file and splits it into before, block, and after sections
-func (m *Manager) ReadSections() (before, block, after []string, err error) {
-	content, err := os.ReadFile(m.Path)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	sections, err := parseFileContent(string(content))
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	before = contentLines(sections.before)
-	block = contentLines(sections.block)
-	after = contentLines(sections.after)
-
-	return before, block, after, nil
-}
-
-// Update an existing domain or append if new
 func upsertEntry(entries []Entry, incoming Entry) []Entry {
 	if incoming.UpdatedAt == "" {
 		incoming.UpdatedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -72,7 +53,7 @@ func upsertEntry(entries []Entry, incoming Entry) []Entry {
 
 	for i, existing := range entries {
 		if strings.EqualFold(existing.Domain, incoming.Domain) {
-			entries[i] = incoming // Update in-place to preserve ordering
+			entries[i] = incoming
 			return entries
 		}
 	}
@@ -80,7 +61,6 @@ func upsertEntry(entries []Entry, incoming Entry) []Entry {
 	return append(entries, incoming)
 }
 
-// Filter a domain and report if found
 func removeEntry(entries []Entry, domain string) ([]Entry, bool) {
 	var filtered []Entry
 	removed := false
@@ -105,14 +85,14 @@ func (m *Manager) Upsert(e Entry) error {
 	return err
 }
 
-// Remove deletes a domain from the managed block.
+// Remove deletes a domain and reports whether it existed
 func (m *Manager) Remove(domain string) (bool, error) {
 	return m.update(func(entries []Entry) ([]Entry, bool) {
 		return removeEntry(entries, domain)
 	})
 }
 
-// Clear removes the managed block.
+// Clear removes the managed block
 func (m *Manager) Clear() error {
 	_, err := m.update(func([]Entry) ([]Entry, bool) {
 		return nil, true

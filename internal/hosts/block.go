@@ -78,7 +78,7 @@ func contentLines(raw string) []string {
 	return strings.Split(normalized, "\n")
 }
 
-// Merges IPv4/IPv6 lines and extracts inline comment metadata
+// Merge address families without changing domain order
 func parseEntries(lines []string) []Entry {
 	byDomain := make(map[string]*Entry)
 	var order []string
@@ -98,7 +98,6 @@ func parseEntries(lines []string) []Entry {
 		ip := hostFields[0]
 		domain := strings.ToLower(hostFields[1])
 
-		// Look up or initialize the Entry for this domain while preserving insertion order
 		ent, exists := byDomain[domain]
 		if !exists {
 			ent = &Entry{Domain: domain}
@@ -106,20 +105,17 @@ func parseEntries(lines []string) []Entry {
 			order = append(order, domain)
 		}
 
-		// Assign IP to IPv6 (contains ':') or IPv4
 		if strings.Contains(ip, ":") {
 			ent.IPv6 = ip
 		} else {
 			ent.IPv4 = ip
 		}
 
-		// Parse inline metadata if a comment exists
 		if hasComment {
 			parseCommentMetadata(comment, ent)
 		}
 	}
 
-	// Reconstruct the ordered slice of Entries
 	var result []Entry
 	for _, domain := range order {
 		result = append(result, *byDomain[domain])
@@ -127,7 +123,6 @@ func parseEntries(lines []string) []Entry {
 	return result
 }
 
-// Extracts key=value pairs from "edgespoof:target=...|mode=...|ts=..."
 func parseCommentMetadata(rawComment string, ent *Entry) {
 	meta := strings.TrimSpace(rawComment)
 	meta, found := strings.CutPrefix(meta, "edgespoof:")
