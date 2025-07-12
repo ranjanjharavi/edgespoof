@@ -20,7 +20,8 @@ func runDig(ctx context.Context, name, recordType string) ([]string, error) {
 	queryContext, cancel := context.WithTimeout(ctx, digTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(queryContext, "dig", name, recordType, "+short")
+	// -q and -t stop dig from reading the name as a server or option
+	cmd := exec.CommandContext(queryContext, "dig", "+short", "-t", recordType, "-q", name)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("dig command failed for %s (%s): %w", name, recordType, err)

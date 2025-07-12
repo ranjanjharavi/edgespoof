@@ -8,10 +8,14 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode"
 
 	"github.com/yupcode/edgespoof/internal/hosts"
 	"github.com/yupcode/edgespoof/internal/resolver"
+)
+
+const (
+	maxDomainLength = 253
+	maxLabelLength  = 63
 )
 
 type command struct {
@@ -23,7 +27,7 @@ type command struct {
 
 func parseCommand(args []string) (command, error) {
 	if len(args) == 0 {
-		return command{}, errors.New("missing command. Run 'edgespoof help' for usage")
+		return command{name: "help"}, nil
 	}
 
 	cmd := command{name: strings.ToLower(args[0])}
@@ -95,26 +99,55 @@ func splitArguments(args []string) (flags, positional []string) {
 	return flags, positional
 }
 
+// Hostname rules: letters, digits, and '-' per label. Labels join with '.'
 func normalizeDomain(domain string) (string, error) {
-	for _, char := range domain {
-		if unicode.IsSpace(char) || unicode.IsControl(char) {
-			return "", fmt.Errorf("domain %q contains whitespace or control characters", domain)
-		}
-	}
-	if strings.HasSuffix(domain, "..") {
-		return "", fmt.Errorf("domain %q has more than one trailing dot", domain)
-	}
-
-	domain = strings.ToLower(domain)
-	domain = strings.TrimSuffix(domain, ".")
-	if domain == "" {
+	name := strings.TrimSuffix(domain, ".")
+	if name == "" {
 		return "", errors.New("domain must not be empty")
 	}
-	if strings.HasPrefix(domain, "-") || strings.HasPrefix(domain, "+") {
-		return "", fmt.Errorf("domain %q must not start with '-' or '+'", domain)
+	if len(name) > maxDomainLength {
+		return "", fmt.Errorf("domain %q is longer than %d characters", domain, maxDomainLength)
 	}
 
-	return domain, nil
+	for _, label := range strings.Split(name, ".") {
+		if err := validateLabel(label); err != nil {
+			return "", fmt.Errorf("invalid domain %q: %w", domain, err)
+		}
+	}
+
+	return strings.ToLower(name), nil
+}
+
+func validateLabel(label string) error {
+	if label == "" {
+		return errors.New("empty label")
+	}
+	if len(label) > maxLabelLength {
+		return fmt.Errorf("label %q is longer than %d characters", label, maxLabelLength)
+	}
+	if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+		return fmt.Errorf("label %q must not start or end with '-'", label)
+	}
+
+	for _, char := range label {
+		if !isLabelChar(char) {
+			return fmt.Errorf("label %q has invalid character %q", label, char)
+		}
+	}
+	return nil
+}
+
+func isLabelChar(char rune) bool {
+	if char == '-' {
+		return true
+	}
+	if 'a' <= char && char <= 'z' {
+		return true
+	}
+	if 'A' <= char && char <= 'Z' {
+		return true
+	}
+	return '0' <= char && char <= '9'
 }
 
 func run(args []string) error {
