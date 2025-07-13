@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yupcode/edgespoof/internal/hosts"
@@ -118,7 +119,7 @@ func printEntries(entries []hosts.Entry) {
 	// MODE stays last. Color codes in an inner column skew tabwriter widths
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Println()
-	fmt.Fprintln(table, "DOMAIN\tIPv4 (A)\tIPv6 (AAAA)\tEDGE TARGET\tMODE")
+	fmt.Fprintln(table, "DOMAIN\tIPv4 (A)\tIPv6 (AAAA)\tEDGE TARGET\tUPDATED\tMODE")
 
 	for _, e := range entries {
 		mode := "edge"
@@ -128,7 +129,7 @@ func printEntries(entries []hosts.Entry) {
 			modeColor = out.yellow
 		}
 
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s%s%s\n", e.Domain, orDash(e.IPv4), orDash(e.IPv6), e.TargetCNAME, modeColor, mode, out.reset)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s%s%s\n", e.Domain, orDash(e.IPv4), orDash(e.IPv6), orDash(e.TargetCNAME), formatUpdated(e.UpdatedAt), modeColor, mode, out.reset)
 	}
 
 	table.Flush()
@@ -142,6 +143,19 @@ func orDash(value string) string {
 	return value
 }
 
+// Stored as RFC3339 UTC. Shown in local time
+func formatUpdated(timestamp string) string {
+	updated, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return "-"
+	}
+	return updated.Local().Format(time.DateTime)
+}
+
+func printVersion() {
+	fmt.Printf("edgespoof %s\n", buildVersion())
+}
+
 func printUsage() {
 	fmt.Printf(`%sedgespoof%s — Atomic CDN CNAME Resolver & Dual-Stack /etc/hosts Switcher
 
@@ -152,6 +166,7 @@ func printUsage() {
   edgespoof list                                          List all currently pinned domains
   edgespoof status                                        Print compact status for shell prompt hooks
   sudo edgespoof clear                                    Remove all edgespoof entries from /etc/hosts
+  edgespoof version                                       Print build version
 
 %sEXAMPLES:%s
   edgespoof resolve example.com

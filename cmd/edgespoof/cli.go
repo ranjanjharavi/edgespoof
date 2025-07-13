@@ -33,7 +33,9 @@ func parseCommand(args []string) (command, error) {
 		cmd.name = "list"
 	case "-h", "--help":
 		cmd.name = "help"
-	case "resolve", "set", "unset", "list", "status", "clear", "help":
+	case "--version":
+		cmd.name = "version"
+	case "resolve", "set", "unset", "list", "status", "clear", "help", "version":
 	default:
 		return command{}, fmt.Errorf("unknown command %q. Run 'edgespoof help' for usage", args[0])
 	}
@@ -153,6 +155,9 @@ func run(args []string) error {
 
 	case "help":
 		printUsage()
+
+	case "version":
+		printVersion()
 	}
 
 	return nil
