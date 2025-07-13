@@ -29,7 +29,7 @@ sudo edgespoof set example.com
 # Pin staging IPs
 sudo edgespoof set example.com -s
 
-# Show pinned domains
+# Show pinned domains. UPDATED in local time
 edgespoof list
 
 # Remove one domain
@@ -43,6 +43,9 @@ edgespoof status
 
 # Show help
 edgespoof help
+
+# Show build version
+edgespoof version
 ```
 
 Replace `example.com` with the target domain.
@@ -51,9 +54,12 @@ Replace `example.com` with the target domain.
 
 - One domain for `resolve`, `set`, or `unset`.
 - Names become lowercase. One trailing dot gets removed.
-- Empty names, whitespace, and control characters fail.
+- Labels allow letters, digits, and `-`. No `-` at label start or end.
+- Labels up to 63 characters. Names up to 253.
+- Empty names and empty labels fail.
+- Unicode names need punycode (`xn--...`).
 - Extra arguments and unknown flags fail.
-- Aliases: `rm` for `unset`, `ls` for `list`.
+- Aliases: `rm` for `unset`, `ls` for `list`, `--version` for `version`.
 
 ## Flags
 
@@ -62,12 +68,23 @@ Use with `resolve` or `set`, before or after the domain.
 - `-s`, `--staging`: use Akamai staging for supported CDN CNAMEs.
 - `--v4-only`: use IPv4 only. Default: IPv4 + IPv6.
 
+## DNS lookups
+
+- `dig` gets 2 tries, 2s each. Hard stop at 5s per record type.
+- One failed address family prints a warning. The other family still shows and pins.
+
+## Output
+
+- Colors only on terminals. Checked per stream (stdout, stderr).
+- `NO_COLOR=1` turns colors off.
+
 ## Hosts file notes
 
 - Entries live between `# --- EDGESPOOF START ---` and `# --- EDGESPOOF END ---`.
 - Edge target, mode, and timestamp live in inline comments.
 - Broken block markers stop reads and writes. Unmanaged text stays intact.
-- Writes use a temporary file and atomic rename. Bind mounts may need a direct write.
+- Writes use a synced temporary file and atomic rename. Bind mounts may need a direct write.
+- Writes keep the hosts file mode.
 - Concurrent writes use `<hosts path>.edgespoof.lock`. Keep this lock file.
 - System hosts changes attempt a DNS cache flush on macOS and Linux. Failures print a warning.
 - Custom hosts files skip OS cache flushing.
