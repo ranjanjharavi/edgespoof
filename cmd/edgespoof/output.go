@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"unicode/utf8"
 
 	"github.com/yupcode/edgespoof/internal/hosts"
@@ -114,20 +115,12 @@ func printEntries(entries []hosts.Entry) {
 		return
 	}
 
-	fmt.Printf("\n%s%-28s %-16s %-30s %-10s %-34s%s\n", out.bold, "DOMAIN", "IPv4 (A)", "IPv6 (AAAA)", "MODE", "EDGE TARGET", out.reset)
-	fmt.Printf("%s%s%s\n", out.dim, strings.Repeat("-", 122), out.reset)
+	// MODE stays last. Color codes in an inner column skew tabwriter widths
+	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Println()
+	fmt.Fprintln(table, "DOMAIN\tIPv4 (A)\tIPv6 (AAAA)\tEDGE TARGET\tMODE")
 
 	for _, e := range entries {
-		v4 := e.IPv4
-		if v4 == "" {
-			v4 = "-"
-		}
-
-		v6 := e.IPv6
-		if v6 == "" {
-			v6 = "-"
-		}
-
 		mode := "edge"
 		modeColor := out.green
 		if e.Staging {
@@ -135,10 +128,18 @@ func printEntries(entries []hosts.Entry) {
 			modeColor = out.yellow
 		}
 
-		fmt.Printf("%-28s %-16s %-30s %s%-10s%s %-34s\n", e.Domain, v4, v6, modeColor, mode, out.reset, e.TargetCNAME)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s%s%s\n", e.Domain, orDash(e.IPv4), orDash(e.IPv6), e.TargetCNAME, modeColor, mode, out.reset)
 	}
 
+	table.Flush()
 	fmt.Println()
+}
+
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func printUsage() {

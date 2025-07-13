@@ -13,11 +13,6 @@ import (
 	"github.com/yupcode/edgespoof/internal/resolver"
 )
 
-const (
-	maxDomainLength = 253
-	maxLabelLength  = 63
-)
-
 type command struct {
 	name    string
 	domain  string
@@ -99,57 +94,6 @@ func splitArguments(args []string) (flags, positional []string) {
 	return flags, positional
 }
 
-// Hostname rules: letters, digits, and '-' per label. Labels join with '.'
-func normalizeDomain(domain string) (string, error) {
-	name := strings.TrimSuffix(domain, ".")
-	if name == "" {
-		return "", errors.New("domain must not be empty")
-	}
-	if len(name) > maxDomainLength {
-		return "", fmt.Errorf("domain %q is longer than %d characters", domain, maxDomainLength)
-	}
-
-	for _, label := range strings.Split(name, ".") {
-		if err := validateLabel(label); err != nil {
-			return "", fmt.Errorf("invalid domain %q: %w", domain, err)
-		}
-	}
-
-	return strings.ToLower(name), nil
-}
-
-func validateLabel(label string) error {
-	if label == "" {
-		return errors.New("empty label")
-	}
-	if len(label) > maxLabelLength {
-		return fmt.Errorf("label %q is longer than %d characters", label, maxLabelLength)
-	}
-	if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-		return fmt.Errorf("label %q must not start or end with '-'", label)
-	}
-
-	for _, char := range label {
-		if !isLabelChar(char) {
-			return fmt.Errorf("label %q has invalid character %q", label, char)
-		}
-	}
-	return nil
-}
-
-func isLabelChar(char rune) bool {
-	if char == '-' {
-		return true
-	}
-	if 'a' <= char && char <= 'z' {
-		return true
-	}
-	if 'A' <= char && char <= 'Z' {
-		return true
-	}
-	return '0' <= char && char <= '9'
-}
-
 func run(args []string) error {
 	cmd, err := parseCommand(args)
 	if err != nil {
@@ -168,8 +112,12 @@ func run(args []string) error {
 	}
 
 	switch cmd.name {
-	case "resolve", "set":
-		return runResolve(cmd, mgr, customHosts)
+	case "resolve":
+		_, err := resolveDomain(cmd)
+		return err
+
+	case "set":
+		return runSet(cmd, mgr, customHosts)
 
 	case "unset":
 		removed, err := mgr.Remove(cmd.domain)
@@ -210,18 +158,24 @@ func run(args []string) error {
 	return nil
 }
 
-func runResolve(cmd command, mgr *hosts.Manager, customHosts bool) error {
+// Resolve and print. Shared by resolve and set
+func resolveDomain(cmd command) (*resolver.Result, error) {
 	res, err := resolver.Resolve(context.Background(), cmd.domain, cmd.staging, cmd.v4Only)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	printResolution(res)
 	if res.Warning != nil {
 		printLookupWarning(res.Warning)
 	}
-	if cmd.name == "resolve" {
-		return nil
+	return res, nil
+}
+
+func runSet(cmd command, mgr *hosts.Manager, customHosts bool) error {
+	res, err := resolveDomain(cmd)
+	if err != nil {
+		return err
 	}
 
 	err = mgr.Upsert(hosts.Entry{

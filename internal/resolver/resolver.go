@@ -26,14 +26,12 @@ type addressResults struct {
 	ipv6 dnsAnswer
 }
 
+// Resolve expects a normalized domain: lowercase, no trailing dot
 func Resolve(ctx context.Context, domain string, staging bool, v4Only bool) (*Result, error) {
 	if err := checkDig(); err != nil {
 		return nil, err
 	}
 
-	domain = strings.TrimSpace(domain)
-	domain = strings.ToLower(domain)
-	domain = strings.TrimSuffix(domain, ".")
 	result := &Result{
 		Domain:      domain,
 		StagingMode: staging,

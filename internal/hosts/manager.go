@@ -48,7 +48,7 @@ func (m *Manager) List() ([]Entry, error) {
 
 func upsertEntry(entries []Entry, incoming Entry) []Entry {
 	if incoming.UpdatedAt == "" {
-		incoming.UpdatedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		incoming.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	for i, existing := range entries {
