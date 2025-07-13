@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os/exec"
@@ -9,11 +10,23 @@ import (
 	"time"
 )
 
-const digTimeout = 4 * time.Second
+const (
+	digTimeout = 5 * time.Second
+
+	// dig exit status when no DNS server replies
+	digNoReply = 9
+)
 
 type dnsAnswer struct {
 	cnames []string
 	ip     string
+}
+
+func checkDig() error {
+	if _, err := exec.LookPath("dig"); err != nil {
+		return errors.New("dig not found in $PATH. Install dnsutils (Debian, Ubuntu), bind-utils (Fedora, RHEL), or bind-tools (Alpine, Arch)")
+	}
+	return nil
 }
 
 func runDig(ctx context.Context, name, recordType string) ([]string, error) {
@@ -21,10 +34,12 @@ func runDig(ctx context.Context, name, recordType string) ([]string, error) {
 	defer cancel()
 
 	// -q and -t stop dig from reading the name as a server or option
-	cmd := exec.CommandContext(queryContext, "dig", "+short", "-t", recordType, "-q", name)
+	cmd := exec.CommandContext(queryContext, "dig", "+short", "+time=2", "+tries=2", "-t", recordType, "-q", name)
+	// Stop waiting on output pipes held open by leftover child processes
+	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("dig command failed for %s (%s): %w", name, recordType, err)
+		return nil, digError(queryContext, name, recordType, err)
 	}
 
 	raw := strings.TrimSpace(string(output))
@@ -41,6 +56,27 @@ func runDig(ctx context.Context, name, recordType string) ([]string, error) {
 	}
 
 	return lines, nil
+}
+
+func digError(ctx context.Context, name, recordType string, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s lookup for %s timed out after %s", recordType, name, digTimeout)
+	}
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return fmt.Errorf("%s lookup for %s failed: %w", recordType, name, err)
+	}
+	if exitErr.ExitCode() == digNoReply {
+		return fmt.Errorf("%s lookup for %s timed out. No DNS server replied", recordType, name)
+	}
+
+	detail := strings.TrimSpace(string(exitErr.Stderr))
+	if detail == "" {
+		return fmt.Errorf("%s lookup for %s failed: %w", recordType, name, err)
+	}
+
+	return fmt.Errorf("%s lookup for %s failed: %w (%s)", recordType, name, err, detail)
 }
 
 func lookup(ctx context.Context, name, recordType string) (dnsAnswer, error) {

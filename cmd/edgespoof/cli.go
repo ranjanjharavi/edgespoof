@@ -217,6 +217,9 @@ func runResolve(cmd command, mgr *hosts.Manager, customHosts bool) error {
 	}
 
 	printResolution(res)
+	if res.Warning != nil {
+		printLookupWarning(res.Warning)
+	}
 	if cmd.name == "resolve" {
 		return nil
 	}

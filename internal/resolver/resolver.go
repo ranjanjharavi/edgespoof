@@ -16,6 +16,9 @@ type Result struct {
 	IPv4        string
 	IPv6        string
 	StagingMode bool
+
+	// Warning holds a failed address family lookup
+	Warning error
 }
 
 type addressResults struct {
@@ -24,6 +27,10 @@ type addressResults struct {
 }
 
 func Resolve(ctx context.Context, domain string, staging bool, v4Only bool) (*Result, error) {
+	if err := checkDig(); err != nil {
+		return nil, err
+	}
+
 	domain = strings.TrimSpace(domain)
 	domain = strings.ToLower(domain)
 	domain = strings.TrimSuffix(domain, ".")
@@ -60,6 +67,7 @@ func Resolve(ctx context.Context, domain string, staging bool, v4Only bool) (*Re
 		return nil, fmt.Errorf("no valid A or AAAA records found for %s", domain)
 	}
 
+	result.Warning = lookupErr
 	result.IPv4 = answers.ipv4.ip
 	result.IPv6 = answers.ipv6.ip
 	primary := answers.ipv4
