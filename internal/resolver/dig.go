@@ -29,7 +29,7 @@ func checkDig() error {
 	return nil
 }
 
-func runDig(ctx context.Context, name, recordType string) ([]string, error) {
+func runDig(ctx context.Context, name, recordType string) (string, error) {
 	queryContext, cancel := context.WithTimeout(ctx, digTimeout)
 	defer cancel()
 
@@ -39,23 +39,10 @@ func runDig(ctx context.Context, name, recordType string) ([]string, error) {
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, digError(queryContext, name, recordType, err)
+		return "", digError(queryContext, name, recordType, err)
 	}
 
-	raw := strings.TrimSpace(string(output))
-	if raw == "" {
-		return nil, nil
-	}
-
-	var lines []string
-	for _, line := range strings.Split(raw, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			lines = append(lines, trimmed)
-		}
-	}
-
-	return lines, nil
+	return string(output), nil
 }
 
 func digError(ctx context.Context, name, recordType string, err error) error {
@@ -80,13 +67,22 @@ func digError(ctx context.Context, name, recordType string, err error) error {
 }
 
 func lookup(ctx context.Context, name, recordType string) (dnsAnswer, error) {
-	lines, err := runDig(ctx, name, recordType)
+	output, err := runDig(ctx, name, recordType)
 	if err != nil {
 		return dnsAnswer{}, err
 	}
 
+	return parseAnswer(output, recordType), nil
+}
+
+// CNAME lines end with '.'. First valid address of the record family wins
+func parseAnswer(output, recordType string) dnsAnswer {
 	var answer dnsAnswer
-	for _, line := range lines {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 		if strings.HasSuffix(line, ".") {
 			answer.cnames = append(answer.cnames, line)
 			continue
@@ -114,5 +110,5 @@ func lookup(ctx context.Context, name, recordType string) (dnsAnswer, error) {
 		answer.ip = address.String()
 	}
 
-	return answer, nil
+	return answer
 }

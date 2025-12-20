@@ -51,11 +51,14 @@ func paletteFor(file *os.File) palette {
 	return ansi
 }
 
-// Joined errors span lines. Extra lines start under the first message line
 func printLabeled(color, label, message string) {
+	fmt.Fprintf(os.Stderr, "%s%s%s %s\n", color, label, errOut.reset, alignUnderLabel(label, message))
+}
+
+// Joined errors span lines. Extra lines start under the first message line
+func alignUnderLabel(label, message string) string {
 	indent := strings.Repeat(" ", utf8.RuneCountInString(label)+1)
-	message = strings.ReplaceAll(message, "\n", "\n"+indent)
-	fmt.Fprintf(os.Stderr, "%s%s%s %s\n", color, label, errOut.reset, message)
+	return strings.ReplaceAll(message, "\n", "\n"+indent)
 }
 
 func printError(err error) {
