@@ -16,6 +16,12 @@ go build -ldflags="-s -w" -o edgespoof ./cmd/edgespoof
 sudo install -m 0755 edgespoof /usr/local/bin/edgespoof
 ```
 
+## Test
+
+```zsh
+go test -race ./...
+```
+
 ## Use
 
 ```zsh
@@ -83,6 +89,7 @@ Use with `resolve` or `set`, before or after the domain.
 - Entries live between `# --- EDGESPOOF START ---` and `# --- EDGESPOOF END ---`.
 - Edge target, mode, and timestamp live in inline comments.
 - Broken block markers stop reads and writes. Unmanaged text stays intact.
+- A missing final newline gets added before the block. It stays after the block goes.
 - Writes use a synced temporary file and atomic rename. Bind mounts may need a direct write.
 - Writes keep the hosts file mode.
 - Concurrent writes use `<hosts path>.edgespoof.lock`. Keep this lock file.
