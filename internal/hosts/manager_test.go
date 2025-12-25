@@ -1,9 +1,11 @@
 package hosts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -145,6 +147,39 @@ func TestManagerClear(t *testing.T) {
 	// Nothing left to clear. Still no error
 	if err := mgr.Clear(); err != nil {
 		t.Errorf("second Clear error: %v", err)
+	}
+}
+
+// Lost updates here mean the lock file stopped serializing writers
+func TestManagerConcurrentUpserts(t *testing.T) {
+	path := newTestManager(t, originalHosts, 0644).Path
+	const writers = 20
+
+	errs := make([]error, writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Own Manager per writer. Same as separate edgespoof processes
+			mgr := NewManager(path)
+			errs[i] = mgr.Upsert(Entry{Domain: fmt.Sprintf("host%d.example.com", i), IPv4: "1.2.3.4"})
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("writer %d: Upsert error: %v", i, err)
+		}
+	}
+
+	entries, err := NewManager(path).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != writers {
+		t.Errorf("List returned %d entries, want %d. Concurrent writes lost updates", len(entries), writers)
 	}
 }
 

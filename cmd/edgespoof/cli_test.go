@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,5 +65,56 @@ func TestParseCommandErrors(t *testing.T) {
 				t.Errorf("parseCommand(%q) error = %v, want error containing %q", tt.args, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Root check must run before any lookup or write
+func TestRunRequiresRootForSystemHosts(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root. Test would touch /etc/hosts")
+	}
+	t.Setenv("EDGESPOOF_HOSTS_PATH", "")
+	// No dig. A skipped root check fails with "dig not found" instead
+	t.Setenv("PATH", t.TempDir())
+
+	commands := [][]string{
+		{"set", "example.com"},
+		{"rm", "example.com"},
+		{"unset", "example.com"},
+		{"clear"},
+	}
+	for _, args := range commands {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "requires root privileges") {
+			t.Errorf("run(%q) error = %v, want root privileges error", args, err)
+		}
+	}
+}
+
+func TestRunCustomHostsSkipsRootCheck(t *testing.T) {
+	const original = "127.0.0.1 localhost\n"
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDGESPOOF_HOSTS_PATH", path)
+
+	commands := [][]string{
+		{"unset", "example.com"},
+		{"clear"},
+		{"list"},
+	}
+	for _, args := range commands {
+		if err := run(args); err != nil {
+			t.Errorf("run(%q) error: %v", args, err)
+		}
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != original {
+		t.Errorf("hosts file = %q, want %q", content, original)
 	}
 }
