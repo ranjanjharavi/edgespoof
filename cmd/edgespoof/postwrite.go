@@ -1,6 +1,6 @@
 package main
 
-import "github.com/yupcode/edgespoof/internal/system"
+import "github.com/ranjanjharavi/edgespoof/internal/system"
 
 func reportHostsUpdate(message string, customHosts bool) {
 	printSuccess(message)
