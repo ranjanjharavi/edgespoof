@@ -1,3 +1,3 @@
-module github.com/yupcode/edgespoof
+module github.com/ranjanjharavi/edgespoof
 
 go 1.22

@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/yupcode/edgespoof/internal/hosts"
-	"github.com/yupcode/edgespoof/internal/resolver"
+	"github.com/ranjanjharavi/edgespoof/internal/hosts"
+	"github.com/ranjanjharavi/edgespoof/internal/resolver"
 )
 
 type command struct {
